@@ -1,8 +1,13 @@
 <?xml version="1.0"?>
 <scenarios>
-    <scenario name="Leaderboard_1" type="LeaderboardVideo" town="Town10HD">
+    <scenario name="Leaderboard_Sergi" type="LeaderboardSergi" town="Town10HD">
         <ego_vehicle x="85.94" y="66.35" z="0.5" yaw="180" model="vehicle.lincoln.mkz2017" />
         <other_actor x="-1.5" y="63.2" z="0.5" yaw="180"/>
+        <weather cloudiness="0" precipitation="0" precipitation_deposits="0" wind_intensity="0" sun_azimuth_angle="-90" sun_altitude_angle="75" />
+    </scenario>
+    <scenario name="Leaderboard_Xavi" type="LeaderboardXavi" town="Town10HD">
+        <ego_vehicle x="19.33" y="140.95" z="0.5" yaw="0" model="vehicle.lincoln.mkz2017" />
+        <other_actor x="58.60" y="146.90" z="0.5" yaw="-90"/>
         <weather cloudiness="0" precipitation="0" precipitation_deposits="0" wind_intensity="0" sun_azimuth_angle="-90" sun_altitude_angle="75" />
     </scenario>
 </scenarios>

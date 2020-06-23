@@ -923,6 +923,7 @@ class KeepVelocity(AtomicBehavior):
         and target velocity
         """
         super(KeepVelocity, self).__init__(name, actor)
+        self._actor = actor
         self.logger.debug("%s.__init__()" % (self.__class__.__name__))
         self._target_velocity = target_velocity
 
@@ -937,13 +938,14 @@ class KeepVelocity(AtomicBehavior):
         self._location = None
 
     def initialise(self):
-        self._location = CarlaDataProvider.get_location(self._actor)
+        self._location = self._actor.get_transform().location
+        print(self._location)
         self._start_time = GameTime.get_time()
 
         # In case of walkers, we have to extract the current heading
         if self._type == 'walker':
             self._control.speed = self._target_velocity
-            self._control.direction = CarlaDataProvider.get_transform(self._actor).get_forward_vector()
+            self._control.direction = self._actor.get_transform().get_forward_vector()
 
         super(KeepVelocity, self).initialise()
 
@@ -963,7 +965,7 @@ class KeepVelocity(AtomicBehavior):
                 self._control.throttle = 0.0
         self._actor.apply_control(self._control)
 
-        new_location = CarlaDataProvider.get_location(self._actor)
+        new_location = self._actor.get_transform().location
         self._distance += calculate_distance(self._location, new_location)
         self._location = new_location
 

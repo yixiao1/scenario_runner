@@ -23,7 +23,7 @@ from srunner.scenarios.basic_scenario import BasicScenario
 from srunner.tools.scenario_helper import get_location_in_distance_from_wp
 
 
-class LeaderboardVideo(BasicScenario):
+class LeaderboardSergi(BasicScenario):
 
     """
     Implementation of "Control Loss Vehicle" (Traffic Scenario 01)
@@ -39,7 +39,7 @@ class LeaderboardVideo(BasicScenario):
         # ego vehicle parameters
      
         self.timeout = timeout
-        super(LeaderboardVideo, self).__init__("LeaderboardVideo",
+        super(LeaderboardSergi, self).__init__("LeaderboardSergi",
                                                 ego_vehicles,
                                                 config,
                                                 world,
@@ -51,8 +51,7 @@ class LeaderboardVideo(BasicScenario):
         Custom initialization
         """
         transform_1 = config.other_actors[0].transform
-        # , color=carla.Color(61,75,137)
-        self.invading_car = CarlaDataProvider.request_new_actor('vehicle.tesla.model3', transform_1)
+        self.invading_car = CarlaDataProvider.request_new_actor('vehicle.tesla.model3', transform_1, color='(255, 255, 255)')
 
     def _create_behavior(self):
         """
