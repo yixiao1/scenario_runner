@@ -1,5 +1,6 @@
 ## Table of Contents
 * [Latest Changes](#latest-changes)
+* [CARLA ScenarioRunner 0.9.10](#carla-scenariorunner-0910)
 * [CARLA ScenarioRunner 0.9.9](#carla-scenariorunner-099)
 * [CARLA ScenarioRunner 0.9.8](#carla-scenariorunner-098)
 * [CARLA ScenarioRunner 0.9.7](#carla-scenariorunner-097)
@@ -10,8 +11,21 @@
 
 ## Latest Changes
 ### :rocket: New Features
+* Added a sensor barrier for the agents to ensure that the simulation waits for them to render their data.
+* Added an option to produce a machine-readable JSON version of the scenario report.
+### :bug: Bug Fixes
+* Fixed exception when using OSC scenarios without EnvironmentAction inside Storyboard-Init
+* Fixed bug causing the TrafficManager to not be correctly updated at asynchronous simualtions
+* Fixed shutdown issue in ScenarioRunner causing to not switch to asynchronous mode
+### :ghost: Maintenance
+* Added check to ensure OSC names (for story/act/maneuver) are unique
+
+
+
+## CARLA ScenarioRunner 0.9.10
+### :rocket: New Features
 * Renamed some agent labels inside Jenkins CI pipelines for new standard proposals.
-* Added support for Jenkins CI pipelines doing automated testing and docker images creation. It builds docker images for Scenario Runner, tags them with the commit id that triggers the pipeline, and stores those images into a shared Elastic Container Registry. 
+* Added support for Jenkins CI pipelines doing automated testing and docker images creation.
 * **Very important:** CarlaActorPool has been removed and all its functions moved to the CarlaDataProvider:
     - The spawning functions have been refactored. All the *setup* functions have been removed, and its functionalities moved to their *request* counterparts. For example, previously *request_new_actor* just called *setup_actor*, but now *setup_actor* no longer exists, and the spawning is done via *request_new_actor*. They have also been unified and are now more consistent.
     - Changed *ActorConfiguration* to *ActorConfigurationData.parse_from_node*
@@ -25,7 +39,9 @@
 * The new weather parameters (related to fog) are now correctly read when running scenarios outside routes.
 * Enable weather animation during scenario execution (requires ephem pip package)
 * Changed manual control to be in par with the CARLA version. Among others, added vehicle lights, recording and some new sensors
-* Removed unsupported scenarios (ChallengeBasic and BackgroundActivity, VehicleTurnLeftAtJunction) 
+* Removed unsupported scenarios (ChallengeBasic and BackgroundActivity, VehicleTurnLeftAtJunction)
+* Added a new metrics module, which gives access to all the information about a scenario in order to allow the user to extract any desired information about the simulation. More information [here](metrics_module.md)
+* Removed the default randomness at the ControlLoss scenario
 * OpenSCENARIO support:
     - Added support for controllers and provided default implementations for vehicles and pedestrians. This required changing the handling of actors, which results in that now all actors are controlled by an OSC controller. Supported controllers:
         - Pedestrian controller
@@ -42,8 +58,10 @@
     - Added support for EndOfRoadCondition
     - Added support for TimeHeadwayCondition
     - Added support for TrafficSignalCondition
+    - Added support for AcquirePositionAction
     - Extended FollowLeadingVehicle example to illustrate weather changes
     - Created example scenarios to illustrate usage of controllers and weather changes
+    - Extended LaneChangeAction to allow lane changes of multiple lanes
     - Reworked the handling of Catalogs to make it compliant to the 1.0 version (relative paths have to be relative to the scenario file)
     - The RoadNetwork can be defined as global Parameter
     - Fixed handling of relative positions with negative offset
@@ -71,8 +89,11 @@
     - InTimeToArrivalToVehicle has had its two actor arguments swapped, to match all the other behaviors.
     - Added *along_route* flag to InTimeToArrivalToVehicle, to take into account the topology of the road
     - Changed the inputs to TrafficLightStateSetter to match the other atomics, but the functionality remains unchanged
+    - Improved LaneChange atomic to allow lane changes of multiple lanes
 
 ### :bug: Bug Fixes
+* Fixed bug causing parsing RelativeTargetSpeed tag to fail. 
+* Fixed missing 'six' in requirements.txt
 * Support OpenSCENARIO parameters also if they're only part of a string value
 * Support Routes in Catalogs
 * Fix parsing of properties within ControllerCatalogs
@@ -92,7 +113,11 @@
 * Fixed bug with ending roads near stop signals to break the simulation
 * Fixed exception bug in spawn function of CarlaDataProvider
 * Fixed access to private member of CARLA LocalPlanner inside OSC NpcVehicleControl
+* Fixed bug causing LaneChange to break the simulation if the asked lane change was impossible, instead of correctly stopping it
+* Fixed bug causing ChangeLane scenarios to never end
 * Fixed handling of OSC LanePosition (#625)
+* Fixed bug causing the route repetitions to spawn different background activity
+* Fixed bug causing the rotate_point function inside RunningRedLightTest to not function properly.
 ### :ghost: Maintenance
 * Exposed traffic manager port flag to enable the execution of multiple scenarios on a single machine.
 
@@ -104,6 +129,8 @@
     - Added support to use a non-CARLA OpenDRIVE map (instead of CARLA towns)
     - Added support for TimeOfDay tag
     - Added support for scenarios with no actors
+    - Added support for TimeToCollisionCondition with freespace.
+    - Added support for TimeHeadwayCondition with freespace.
 * Scenario updates:
     - Scenarios that are part of RouteScenario have had their triggering condition modified. This will only activate when a certain parameter is set, and if not, the old trigger condition will still be applied.
 * Atomics:

@@ -207,7 +207,7 @@ contains of submodules, which are not listed, the support status applies to all 
 <td><small><code>LateralAction</code></small><br><code>LaneChangeAction</code></td>
 <td>&#10060;</td>
 <td>&#9989;</td>
-<td>Currently only lane change by one lane to the left or right is supported (RelativeTargetLane).</td>
+<td>Currently all lane changes have a linear dynamicShape, the dynamicDimension is defined as the distance and are relative to the actor itself (RelativeTargetLane).</td>
 <tr>
 <td><small><code>LateralAction</code></small><br><code>LaneOffsetAction</code></td>
 <td>&#10060;</td>
@@ -221,7 +221,7 @@ contains of submodules, which are not listed, the support status applies to all 
 <tr>
 <td><small><code>LongitudinalAction</code></small><br><code>LongitudinalDistanceAction</code></td>
 <td>&#10060;</td>
-<td>&#9989;</td>
+<td>&#10060;</td>
 <td></td>
 <tr>
 <td><small><code>LongitudinalAction</code></small><br><code>SpeedAction</code></td>
@@ -246,7 +246,7 @@ contains of submodules, which are not listed, the support status applies to all 
 <tr>
 <td><small><code>RoutingAction</code></small><br><code>AcquirePositionAction</code></td>
 <td>&#10060;</td>
-<td>&#10060;</td>
+<td>&#9989;</td>
 <td></td>
 <tr>
 <td><small><code>RoutingAction</code></small><br><code>AssignRouteAction</code></td>
@@ -321,11 +321,11 @@ The following two tables list the support status for each.
 <tr>
 <td><code>TimeHeadwayCondition</code></td>
 <td>&#9989;</td>
-<td>*freespace* attribute is still not supported</td>
+<td></td>
 <tr>
 <td><code>TimeToCollisionCondition</code></td>
 <td>&#9989;</td>
-<td>*freespace* attribute is still not supported</td>
+<td></td>
 <tr>
 <td><code>TraveledDistanceCondition</code></td>
 <td>&#9989;</td>

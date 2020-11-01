@@ -167,6 +167,9 @@ class ScenarioManager(object):
             if self._agent is not None:
                 ego_action = self._agent()
 
+            if self._agent is not None:
+                self.ego_vehicles[0].apply_control(ego_action)
+
             # Tick scenario
             self.scenario_tree.tick_once()
 
@@ -177,9 +180,6 @@ class ScenarioManager(object):
 
             if self.scenario_tree.status != py_trees.common.Status.RUNNING:
                 self._running = False
-
-            if self._agent is not None:
-                self.ego_vehicles[0].apply_control(ego_action)
 
         if self._sync_mode and self._running and self._watchdog.get_status():
             CarlaDataProvider.get_world().tick()
@@ -197,7 +197,7 @@ class ScenarioManager(object):
         """
         self._running = False
 
-    def analyze_scenario(self, stdout, filename, junit):
+    def analyze_scenario(self, stdout, filename, junit, json):
         """
         This function is intended to be called from outside and provide
         the final statistics about the scenario (human-readable, in form of a junit
@@ -225,7 +225,7 @@ class ScenarioManager(object):
             timeout = True
             result = "TIMEOUT"
 
-        output = ResultOutputProvider(self, result, stdout, filename, junit)
+        output = ResultOutputProvider(self, result, stdout, filename, junit, json)
         output.write()
 
         return failure or timeout

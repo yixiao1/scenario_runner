@@ -9,6 +9,8 @@
 This module provides a parser for scenario configuration files based on OpenSCENARIO
 """
 
+from __future__ import print_function
+
 from distutils.util import strtobool
 import copy
 import datetime
@@ -29,6 +31,7 @@ from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (TrafficLig
                                                                       ChangeActorTargetSpeed,
                                                                       ChangeActorControl,
                                                                       ChangeActorWaypoints,
+                                                                      ChangeActorWaypointsToReachPosition,
                                                                       ChangeActorLateralMotion,
                                                                       Idle)
 # pylint: disable=unused-import
@@ -63,6 +66,19 @@ from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import (I
                                                                                WaitForTrafficLightState)
 from srunner.scenariomanager.timer import TimeOut, SimulationTimeCondition
 from srunner.tools.py_trees_port import oneshot_behavior
+
+
+def oneshot_with_check(variable_name, behaviour, name=None):
+    """
+    Check if the blackboard contains already variable_name and
+    return a oneshot_behavior for behaviour.
+    """
+    blackboard = py_trees.blackboard.Blackboard()
+    # check if the variable_name already exists in the blackboard
+    if blackboard.get(variable_name) is not None:
+        print("Warning: {} is already used before. Check your XOSC for duplicated names".format(variable_name))
+
+    return oneshot_behavior(variable_name, behaviour, name)
 
 
 class OpenScenarioParser(object):
@@ -268,7 +284,12 @@ class OpenScenarioParser(object):
         returns:
            friction (float)
         """
-        set_environment = next(xml_tree.iter("EnvironmentAction"))
+
+        if xml_tree.findall('.//EnvironmentAction'):
+            node = xml_tree.findall('.//EnvironmentAction')[0]
+            set_environment = next(node.iter("EnvironmentAction"))
+        else:
+            return 1.0
 
         if sum(1 for _ in set_environment.iter("Weather")) != 0:
             environment = set_environment.find("Environment")
@@ -297,7 +318,12 @@ class OpenScenarioParser(object):
         returns:
            Weather (srunner.scenariomanager.weather_sim.Weather)
         """
-        set_environment = next(xml_tree.iter("EnvironmentAction"))
+
+        if xml_tree.findall('.//EnvironmentAction'):
+            node = xml_tree.findall('.//EnvironmentAction')[0]
+            set_environment = next(node.iter("EnvironmentAction"))
+        else:
+            return Weather(carla.WeatherParameters())
 
         if sum(1 for _ in set_environment.iter("Weather")) != 0:
             environment = set_environment.find("Environment")
@@ -401,8 +427,9 @@ class OpenScenarioParser(object):
         if route is not None:
             for waypoint in route.iter('Waypoint'):
                 position = waypoint.find('Position')
-                transform = OpenScenarioParser.convert_position_to_transform(position)
-                waypoints.append(transform)
+                waypoints.append(position)
+        else:
+            raise AttributeError("No waypoints has been set")
 
         return waypoints
 
@@ -671,9 +698,6 @@ class OpenScenarioParser(object):
                     condition_operator = OpenScenarioParser.operators[condition_rule]
 
                     condition_freespace = strtobool(headtime_condition.attrib.get('freespace', False))
-                    if condition_freespace:
-                        raise NotImplementedError(
-                            "TimeHeadwayCondition: freespace attribute is currently not implemented")
                     condition_along_route = strtobool(headtime_condition.attrib.get('alongRoute', False))
 
                     for actor in actor_list:
@@ -685,7 +709,7 @@ class OpenScenarioParser(object):
                             headtime_condition.attrib.get('entityRef', None)))
 
                     atomic = InTimeToArrivalToVehicle(
-                        trigger_actor, triggered_actor, condition_value,
+                        trigger_actor, triggered_actor, condition_value, condition_freespace,
                         condition_along_route, condition_operator, condition_name
                     )
 
@@ -695,13 +719,11 @@ class OpenScenarioParser(object):
                     condition_rule = ttc_condition.attrib.get('rule')
                     condition_operator = OpenScenarioParser.operators[condition_rule]
 
-                    condition_value = ttc_condition.attrib.get('value')
+                    condition_value = float(ttc_condition.attrib.get('value'))
                     condition_target = ttc_condition.find('TimeToCollisionConditionTarget')
+                    entity_ref_ = condition_target.find('EntityRef')
 
                     condition_freespace = strtobool(ttc_condition.attrib.get('freespace', False))
-                    if condition_freespace:
-                        raise NotImplementedError(
-                            "TimeToCollisionCondition: freespace attribute is currently not implemented")
                     condition_along_route = strtobool(ttc_condition.attrib.get('alongRoute', False))
 
                     if condition_target.find('Position') is not None:
@@ -710,15 +732,15 @@ class OpenScenarioParser(object):
                             trigger_actor, position, condition_value, condition_along_route, condition_operator)
                     else:
                         for actor in actor_list:
-                            if ttc_condition.attrib.get('EntityRef', None) == actor.attributes['role_name']:
+                            if entity_ref_.attrib.get('entityRef', None) == actor.attributes['role_name']:
                                 triggered_actor = actor
                                 break
                         if triggered_actor is None:
                             raise AttributeError("Cannot find actor '{}' for condition".format(
-                                ttc_condition.attrib.get('EntityRef', None)))
+                                entity_ref_.attrib.get('entityRef', None)))
 
                         atomic = InTimeToArrivalToVehicle(
-                            trigger_actor, triggered_actor, condition_value,
+                            trigger_actor, triggered_actor, condition_value, condition_freespace,
                             condition_along_route, condition_operator, condition_name)
                 elif entity_condition.find('AccelerationCondition') is not None:
                     accel_condition = entity_condition.find('AccelerationCondition')
@@ -928,9 +950,9 @@ class OpenScenarioParser(object):
                     policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL, name=maneuver_name)
 
                 env_behavior.add_child(
-                    oneshot_behavior(variable_name=maneuver_name + ">WeatherUpdate", behaviour=weather_behavior))
+                    oneshot_with_check(variable_name=maneuver_name + ">WeatherUpdate", behaviour=weather_behavior))
                 env_behavior.add_child(
-                    oneshot_behavior(variable_name=maneuver_name + ">FrictionUpdate", behaviour=friction_behavior))
+                    oneshot_with_check(variable_name=maneuver_name + ">FrictionUpdate", behaviour=friction_behavior))
 
                 return env_behavior
 
@@ -979,7 +1001,7 @@ class OpenScenarioParser(object):
                                 obj_actor = traffic_actor
 
                         atomic = ChangeActorTargetSpeed(actor,
-                                                        target_speed,
+                                                        target_speed=0.0,
                                                         relative_actor=obj_actor,
                                                         value=value,
                                                         value_type=value_type,
@@ -996,10 +1018,11 @@ class OpenScenarioParser(object):
                 private_action = private_action.find('LateralAction')
                 if private_action.find('LaneChangeAction') is not None:
                     # Note: LaneChangeActions are currently only supported for RelativeTargetLane
-                    #       with +1 or -1 referring to the action actor
                     lat_maneuver = private_action.find('LaneChangeAction')
                     target_lane_rel = float(lat_maneuver.find("LaneChangeTarget").find(
                         "RelativeTargetLane").attrib.get('value', 0))
+                    direction = "left" if target_lane_rel < 0 else "right"
+                    lane_changes = abs(target_lane_rel)
                     # duration and distance
                     distance = float('inf')
                     duration = float('inf')
@@ -1010,10 +1033,10 @@ class OpenScenarioParser(object):
                     else:
                         duration = float(
                             lat_maneuver.find("LaneChangeActionDynamics").attrib.get('value', float("inf")))
-                    atomic = ChangeActorLateralMotion(actor,
-                                                      direction="left" if target_lane_rel < 0 else "right",
+                    atomic = ChangeActorLateralMotion(actor, direction=direction,
                                                       distance_lane_change=distance,
                                                       distance_other_lane=1000,
+                                                      lane_changes=lane_changes,
                                                       name=maneuver_name)
                 else:
                     raise AttributeError("Unknown lateral action")
@@ -1042,7 +1065,10 @@ class OpenScenarioParser(object):
                 elif private_action.find('FollowTrajectoryAction') is not None:
                     raise NotImplementedError("Private FollowTrajectory actions are not yet supported")
                 elif private_action.find('AcquirePositionAction') is not None:
-                    raise NotImplementedError("Private AcquirePosition actions are not yet supported")
+                    route_action = private_action.find('AcquirePositionAction')
+                    osc_position = route_action.find('Position')
+                    position = OpenScenarioParser.convert_position_to_transform(osc_position)
+                    atomic = ChangeActorWaypointsToReachPosition(actor, position=position, name=maneuver_name)
                 else:
                     raise AttributeError("Unknown private routing action")
             else:
