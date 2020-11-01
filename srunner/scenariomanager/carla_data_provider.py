@@ -694,8 +694,8 @@ class CarlaActorPool(object):
             walkers_present[i].go_to_location(location_to_go)
             # random max speed
             walkers_present[i].set_max_speed(1 + random.random())    # max speed between 1 and 2 (default is 1.4 m/s)
-            logging.debug(f" walker send to location {location_to_go.x},"
-                          f"        {location_to_go.y} {location_to_go.z} ")
+            #logging.debug(f" walker send to location {location_to_go.x},"
+            #              f"        {location_to_go.y} {location_to_go.z} ")
 
         return actor_list
 
