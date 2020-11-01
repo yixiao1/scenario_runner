@@ -13,18 +13,17 @@ regains control and corrects it's course.
 """
 
 import random
-
 import py_trees
+import carla
 
-from srunner.scenariomanager.scenarioatomics.atomic_behaviors import *
+from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
+from srunner.scenariomanager.scenarioatomics.atomic_behaviors import ChangeNoiseParameters, ActorTransformSetter
 from srunner.scenariomanager.scenarioatomics.atomic_criteria import CollisionTest
-from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import *
+from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import (InTriggerDistanceToLocation,
+                                                                               InTriggerDistanceToNextIntersection,
+                                                                               DriveDistance)
 from srunner.scenarios.basic_scenario import BasicScenario
-from srunner.tools.scenario_helper import *
-
-CONTROL_LOSS_SCENARIOS = [
-    "ControlLoss"
-]
+from srunner.tools.scenario_helper import get_location_in_distance_from_wp
 
 
 class ControlLoss(BasicScenario):
@@ -34,8 +33,6 @@ class ControlLoss(BasicScenario):
 
     This is a single ego vehicle scenario
     """
-
-    category = "ControlLoss"
 
     def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True,
                  timeout=60):
@@ -101,9 +98,13 @@ class ControlLoss(BasicScenario):
                                                               self.third_loc_prev.y,
                                                               self.third_loc_prev.z))
 
-        first_debris = CarlaActorPool.request_new_actor('static.prop.dirtdebris01', self.first_transform)
-        second_debris = CarlaActorPool.request_new_actor('static.prop.dirtdebris01', self.sec_transform)
-        third_debris = CarlaActorPool.request_new_actor('static.prop.dirtdebris01', self.third_transform)
+        first_debris = CarlaDataProvider.request_new_actor('static.prop.dirtdebris01', self.first_transform, 'prop')
+        second_debris = CarlaDataProvider.request_new_actor('static.prop.dirtdebris01', self.sec_transform, 'prop')
+        third_debris = CarlaDataProvider.request_new_actor('static.prop.dirtdebris01', self.third_transform, 'prop')
+
+        first_debris.set_transform(self.first_transform)
+        second_debris.set_transform(self.sec_transform)
+        third_debris.set_transform(self.third_transform)
 
         self.obj.extend([first_debris, second_debris, third_debris])
         for debris in self.obj:

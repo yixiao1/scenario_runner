@@ -15,16 +15,16 @@ import py_trees
 import carla
 from agents.navigation.local_planner import RoadOption
 
-from srunner.scenariomanager.scenarioatomics.atomic_behaviors import *
-from srunner.scenariomanager.scenarioatomics.atomic_criteria import *
-from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import *
+from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
+from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (ActorTransformSetter,
+                                                                      ActorDestroy,
+                                                                      ActorSource,
+                                                                      ActorSink,
+                                                                      WaypointFollower)
+from srunner.scenariomanager.scenarioatomics.atomic_criteria import CollisionTest
+from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import DriveDistance
 from srunner.scenarios.basic_scenario import BasicScenario
-from srunner.tools.scenario_helper import *
-
-
-TURN_LEFT_SIGNALIZED_JUNCTION_SCENARIOS = [
-    "SignalizedJunctionLeftTurn"
-]
+from srunner.tools.scenario_helper import generate_target_waypoint
 
 
 class SignalizedJunctionLeftTurn(BasicScenario):
@@ -36,7 +36,6 @@ class SignalizedJunctionLeftTurn(BasicScenario):
 
     This is a single ego vehicle scenario
     """
-    category = "SignalizedJunctionLeftTurn"
 
     timeout = 80  # Timeout of scenario in seconds
 
@@ -45,7 +44,6 @@ class SignalizedJunctionLeftTurn(BasicScenario):
         """
         Setup all relevant parameters and create scenario
         """
-        self.category = "SignalizedJunctionLeftTurn"
         self._world = world
         self._map = CarlaDataProvider.get_map()
         self._target_vel = 6.9
@@ -54,7 +52,7 @@ class SignalizedJunctionLeftTurn(BasicScenario):
         self._traffic_light = None
         self._other_actor_transform = None
         self._blackboard_queue_name = 'SignalizedJunctionLeftTurn/actor_flow_queue'
-        self._queue = Blackboard().set(self._blackboard_queue_name, Queue())
+        self._queue = py_trees.blackboard.Blackboard().set(self._blackboard_queue_name, Queue())
         self._initialized = True
         super(SignalizedJunctionLeftTurn, self).__init__("TurnLeftAtSignalizedJunction",
                                                          ego_vehicles,
@@ -83,11 +81,9 @@ class SignalizedJunctionLeftTurn(BasicScenario):
                            config.other_actors[0].transform.location.y,
                            config.other_actors[0].transform.location.z - 500),
             config.other_actors[0].transform.rotation)
-        try:
-            first_vehicle = CarlaActorPool.request_new_actor(config.other_actors[0].model, self._other_actor_transform)
-        except RuntimeError as r:
-            raise r
+        first_vehicle = CarlaDataProvider.request_new_actor(config.other_actors[0].model, self._other_actor_transform)
         first_vehicle.set_transform(first_vehicle_transform)
+        first_vehicle.set_simulate_physics(enabled=False)
         self.other_actors.append(first_vehicle)
 
     def _create_behavior(self):

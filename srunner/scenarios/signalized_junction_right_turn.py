@@ -18,15 +18,18 @@ import py_trees
 import carla
 from agents.navigation.local_planner import RoadOption
 
-from srunner.scenariomanager.scenarioatomics.atomic_behaviors import *
-from srunner.scenariomanager.scenarioatomics.atomic_criteria import *
-from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import *
+from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
+from srunner.scenariomanager.scenarioatomics.atomic_behaviors import (ActorTransformSetter,
+                                                                      ActorDestroy,
+                                                                      StopVehicle,
+                                                                      SyncArrival,
+                                                                      WaypointFollower)
+from srunner.scenariomanager.scenarioatomics.atomic_criteria import CollisionTest
+from srunner.scenariomanager.scenarioatomics.atomic_trigger_conditions import DriveDistance, InTriggerDistanceToLocation
 from srunner.scenarios.basic_scenario import BasicScenario
-from srunner.tools.scenario_helper import *
-
-TURNING_RIGHT_SIGNALIZED_JUNCTION_SCENARIOS = [
-    "SignalizedJunctionRightTurn"
-]
+from srunner.tools.scenario_helper import (get_geometric_linear_intersection,
+                                           get_crossing_point,
+                                           generate_target_waypoint)
 
 
 class SignalizedJunctionRightTurn(BasicScenario):
@@ -38,7 +41,6 @@ class SignalizedJunctionRightTurn(BasicScenario):
 
     This is a single ego vehicle scenario
     """
-    category = "SignalizedJunctionLeftTurn"
 
     def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True,
                  timeout=80):
@@ -83,7 +85,8 @@ class SignalizedJunctionRightTurn(BasicScenario):
                            config.other_actors[0].transform.location.y,
                            config.other_actors[0].transform.location.z - 500),
             config.other_actors[0].transform.rotation)
-        first_vehicle = CarlaActorPool.request_new_actor(config.other_actors[0].model, first_vehicle_transform)
+        first_vehicle = CarlaDataProvider.request_new_actor(config.other_actors[0].model, first_vehicle_transform)
+        first_vehicle.set_simulate_physics(enabled=False)
         self.other_actors.append(first_vehicle)
 
     def _create_behavior(self):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2019 Intel Corporation
+# Copyright (c) 2019-2020 Intel Corporation
 #
 # This work is licensed under the terms of the MIT license.
 # For a copy, see <https://opensource.org/licenses/MIT>.
@@ -11,8 +11,8 @@ This module provides Challenge routes as standalone scenarios
 
 from __future__ import print_function
 
-import copy
 import math
+import traceback
 import xml.etree.ElementTree as ET
 import numpy.random as random
 
@@ -23,74 +23,45 @@ import carla
 from agents.navigation.local_planner import RoadOption
 
 # pylint: disable=line-too-long
-from srunner.scenarioconfigs.scenario_configuration import ScenarioConfiguration, ActorConfigurationData, ActorConfiguration
+from srunner.scenarioconfigs.scenario_configuration import ScenarioConfiguration, ActorConfigurationData
 # pylint: enable=line-too-long
-from srunner.scenariomanager.carla_data_provider import CarlaDataProvider, CarlaActorPool
+from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
+from srunner.scenariomanager.scenarioatomics.atomic_behaviors import Idle, ScenarioTriggerer
 from srunner.scenarios.basic_scenario import BasicScenario
-from srunner.scenarios.master_scenario import MasterScenario
-from srunner.scenarios.background_activity import BackgroundActivity
-from srunner.scenarios.trafficlight_scenario import TrafficLightScenario
 from srunner.tools.route_parser import RouteParser, TRIGGER_THRESHOLD, TRIGGER_ANGLE_THRESHOLD
-from srunner.tools.route_manipulation import interpolate_trajectory, clean_route
+from srunner.tools.route_manipulation import interpolate_trajectory
+from srunner.tools.py_trees_port import oneshot_behavior
 
 from srunner.scenarios.control_loss import ControlLoss
 from srunner.scenarios.follow_leading_vehicle import FollowLeadingVehicle
 from srunner.scenarios.object_crash_vehicle import DynamicObjectCrossing
-from srunner.scenarios.object_crash_intersection import VehicleTurningRight, VehicleTurningLeft
+from srunner.scenarios.object_crash_intersection import VehicleTurningRoute
 from srunner.scenarios.other_leading_vehicle import OtherLeadingVehicle
-from srunner.scenarios.opposite_vehicle_taking_priority import OppositeVehicleRunningRedLight
-from srunner.scenarios.signalized_junction_left_turn import SignalizedJunctionLeftTurn
-from srunner.scenarios.signalized_junction_right_turn import SignalizedJunctionRightTurn
-from srunner.scenarios.no_signal_junction_crossing import NoSignalJunctionCrossing
 from srunner.scenarios.maneuver_opposite_direction import ManeuverOppositeDirection
+from srunner.scenarios.junction_crossing_route import SignalJunctionCrossingRoute, NoSignalJunctionCrossingRoute
 
+from srunner.scenariomanager.scenarioatomics.atomic_criteria import (CollisionTest,
+                                                                     InRouteTest,
+                                                                     RouteCompletionTest,
+                                                                     OutsideRouteLanesTest,
+                                                                     RunningRedLightTest,
+                                                                     RunningStopTest,
+                                                                     ActorSpeedAboveThresholdTest)
 
-ROUTESCENARIO = ["RouteScenario"]
-
-MAX_ALLOWED_RADIUS_SENSOR = 5.0
 SECONDS_GIVEN_PER_METERS = 0.4
-MAX_CONNECTION_ATTEMPTS = 5
 
 NUMBER_CLASS_TRANSLATION = {
-    "Scenario1": [ControlLoss],
-    "Scenario2": [FollowLeadingVehicle],
-    "Scenario3": [DynamicObjectCrossing],
-    "Scenario4": [VehicleTurningRight, VehicleTurningLeft],
-    "Scenario5": [OtherLeadingVehicle],
-    "Scenario6": [ManeuverOppositeDirection],
-    "Scenario7": [OppositeVehicleRunningRedLight],
-    "Scenario8": [SignalizedJunctionLeftTurn],
-    "Scenario9": [SignalizedJunctionRightTurn],
-    "Scenario10": [NoSignalJunctionCrossing]
+    "Scenario1": ControlLoss,
+    "Scenario2": FollowLeadingVehicle,
+    "Scenario3": DynamicObjectCrossing,
+    "Scenario4": VehicleTurningRoute,
+    "Scenario5": OtherLeadingVehicle,
+    "Scenario6": ManeuverOppositeDirection,
+    "Scenario7": SignalJunctionCrossingRoute,
+    "Scenario8": SignalJunctionCrossingRoute,
+    "Scenario9": SignalJunctionCrossingRoute,
+    "Scenario10": NoSignalJunctionCrossingRoute
 }
-
-
-def oneshot_behavior(name, variable_name, behaviour):
-    """
-    This is taken from py_trees.idiom.oneshot.
-    """
-    subtree_root = py_trees.composites.Selector(name=name)
-    check_flag = py_trees.blackboard.CheckBlackboardVariable(
-        name=variable_name + " Done?",
-        variable_name=variable_name,
-        expected_value=True,
-        clearing_policy=py_trees.common.ClearingPolicy.ON_INITIALISE
-    )
-    set_flag = py_trees.blackboard.SetBlackboardVariable(
-        name="Mark Done",
-        variable_name=variable_name,
-        variable_value=True
-    )
-    # If it's a sequence, don't double-nest it in a redundant manner
-    if isinstance(behaviour, py_trees.composites.Sequence):
-        behaviour.add_child(set_flag)
-        sequence = behaviour
-    else:
-        sequence = py_trees.composites.Sequence(name="OneShot")
-        sequence.add_children([behaviour, set_flag])
-
-    subtree_root.add_children([check_flag, sequence])
-    return subtree_root
 
 
 def convert_json_to_transform(actor_dict):
@@ -104,7 +75,7 @@ def convert_json_to_transform(actor_dict):
 
 def convert_json_to_actor(actor_dict):
     """
-    Convert a JSON string to an ActorConfiguration dictionary
+    Convert a JSON string to an ActorConfigurationData dictionary
     """
     node = ET.Element('waypoint')
     node.set('x', actor_dict['x'])
@@ -112,7 +83,7 @@ def convert_json_to_actor(actor_dict):
     node.set('z', actor_dict['z'])
     node.set('yaw', actor_dict['yaw'])
 
-    return ActorConfiguration(node, rolename='simulation')
+    return ActorConfigurationData.parse_from_node(node, 'simulation')
 
 
 def convert_transform_to_location(transform_vec):
@@ -171,22 +142,25 @@ class RouteScenario(BasicScenario):
     along which several smaller scenarios are triggered
     """
 
-    category = "RouteScenario"
-
     def __init__(self, world, config, debug_mode=False, criteria_enable=True, timeout=300):
         """
         Setup all relevant parameters and create scenarios along route
         """
+
         self.config = config
         self.route = None
-        self.target = None
         self.sampled_scenarios_definitions = None
 
         self._update_route(world, config, debug_mode)
 
         ego_vehicle = self._update_ego_vehicle()
 
-        self._create_scenarios_along_route(world, ego_vehicle, config, debug_mode)
+        self.list_scenarios = self._build_scenario_instances(world,
+                                                             ego_vehicle,
+                                                             self.sampled_scenarios_definitions,
+                                                             scenarios_per_tick=5,
+                                                             timeout=self.timeout,
+                                                             debug_mode=debug_mode)
 
         super(RouteScenario, self).__init__(name=config.name,
                                             ego_vehicles=[ego_vehicle],
@@ -205,20 +179,15 @@ class RouteScenario(BasicScenario):
         - config: Scenario configuration (RouteConfiguration)
         """
 
-        # retrieve worlds annotations
+        # Transform the scenario file into a dictionary
         world_annotations = RouteParser.parse_annotations_file(config.scenario_file)
 
-        _route_description = copy.copy(config.route_description)
+        # prepare route's trajectory (interpolate and add the GPS route)
+        gps_route, route = interpolate_trajectory(world, config.trajectory)
 
-        # prepare route's trajectory
-        gps_route, _route_description['trajectory'] = interpolate_trajectory(world,
-                                                                             _route_description['trajectory'])
+        potential_scenarios_definitions, _ = RouteParser.scan_route_for_scenarios(config.town, route, world_annotations)
 
-        potential_scenarios_definitions, _ = RouteParser.scan_route_for_scenarios(_route_description,
-                                                                                  world_annotations)
-
-        self.route = _route_description['trajectory']
-        self.target = self.route[-1][0]
+        self.route = route
         CarlaDataProvider.set_ego_vehicle_route(convert_transform_to_location(self.route))
 
         config.agent.set_global_plan(gps_route, self.route)
@@ -231,8 +200,7 @@ class RouteScenario(BasicScenario):
 
         # Print route in debug mode
         if debug_mode:
-            turn_positions_and_labels = clean_route(self.route)
-            self._draw_waypoints(world, self.route, turn_positions_and_labels, vertical_shift=1.0, persistency=50000.0)
+            self._draw_waypoints(world, self.route, vertical_shift=1.0, persistency=50000.0)
 
     def _update_ego_vehicle(self):
         """
@@ -242,50 +210,11 @@ class RouteScenario(BasicScenario):
         elevate_transform = self.route[0][0]
         elevate_transform.location.z += 0.5
 
-        ego_vehicle = CarlaActorPool.request_new_actor('vehicle.lincoln.mkz2017',
-                                                       elevate_transform,
-                                                       rolename='hero',
-                                                       hero=True)
+        ego_vehicle = CarlaDataProvider.request_new_actor('vehicle.lincoln.mkz2017',
+                                                          elevate_transform,
+                                                          rolename='hero')
 
         return ego_vehicle
-
-    def _create_scenarios_along_route(self, world, ego_vehicle, config, debug_mode=False):
-        """
-        Create the different scenarios along the route
-        - MasterScenario for observation
-        - BackgroundActivity for controlling background traffic
-        - TrafficlightScenario for controlling/manipulating traffic lights
-        - Other scenarios that occur along the route
-        """
-        # build the master scenario based on the route and the target.
-        self.master_scenario = self._build_master_scenario(world,
-                                                           ego_vehicle,
-                                                           self.route,
-                                                           config.town,
-                                                           timeout=self.timeout,
-                                                           debug_mode=False)
-
-        self.background_scenario = self._build_background_scenario(world,
-                                                                   ego_vehicle,
-                                                                   config.town,
-                                                                   timeout=self.timeout,
-                                                                   debug_mode=False)
-
-        self.traffic_light_scenario = self._build_trafficlight_scenario(world,
-                                                                        ego_vehicle,
-                                                                        config.town,
-                                                                        timeout=self.timeout,
-                                                                        debug_mode=False)
-
-        self.list_scenarios = [self.master_scenario, self.background_scenario, self.traffic_light_scenario]
-
-        # build the instance based on the parsed definitions.
-        self.list_scenarios += self._build_scenario_instances(world,
-                                                              ego_vehicle,
-                                                              self.sampled_scenarios_definitions,
-                                                              config.town,
-                                                              timeout=self.timeout,
-                                                              debug_mode=debug_mode)
 
     def _estimate_route_timeout(self):
         """
@@ -302,29 +231,29 @@ class RouteScenario(BasicScenario):
         return int(SECONDS_GIVEN_PER_METERS * route_length)
 
     # pylint: disable=no-self-use
-    def _draw_waypoints(self, world, waypoints, turn_positions_and_labels, vertical_shift, persistency=-1):
+    def _draw_waypoints(self, world, waypoints, vertical_shift, persistency=-1):
         """
         Draw a list of waypoints at a certain height given in vertical_shift.
         """
         for w in waypoints:
             wp = w[0].location + carla.Location(z=vertical_shift)
-            world.debug.draw_point(wp, size=0.1, color=carla.Color(0, 255, 0), life_time=persistency)
-        for start, end, conditions in turn_positions_and_labels:
 
-            if conditions == RoadOption.LEFT:  # Yellow
+            size = 0.2
+            if w[1] == RoadOption.LEFT:  # Yellow
                 color = carla.Color(255, 255, 0)
-            elif conditions == RoadOption.RIGHT:  # Cyan
+            elif w[1] == RoadOption.RIGHT:  # Cyan
                 color = carla.Color(0, 255, 255)
-            elif conditions == RoadOption.CHANGELANELEFT:  # Orange
+            elif w[1] == RoadOption.CHANGELANELEFT:  # Orange
                 color = carla.Color(255, 64, 0)
-            elif conditions == RoadOption.CHANGELANERIGHT:  # Dark Cyan
+            elif w[1] == RoadOption.CHANGELANERIGHT:  # Dark Cyan
                 color = carla.Color(0, 64, 255)
-            else:  # STRAIGHT
-                color = carla.Color(128, 128, 128)  # Gray
+            elif w[1] == RoadOption.STRAIGHT:  # Gray
+                color = carla.Color(128, 128, 128)
+            else:  # LANEFOLLOW
+                color = carla.Color(0, 255, 0)  # Green
+                size = 0.1
 
-            for position in range(start, end):
-                world.debug.draw_point(waypoints[position][0].location + carla.Location(z=vertical_shift),
-                                       size=0.2, color=color, life_time=persistency)
+            world.debug.draw_point(wp, size=size, color=color, life_time=persistency)
 
         world.debug.draw_point(waypoints[0][0].location + carla.Location(z=vertical_shift), size=0.2,
                                color=carla.Color(0, 0, 255), life_time=persistency)
@@ -337,7 +266,7 @@ class RouteScenario(BasicScenario):
         """
 
         # fix the random seed for reproducibility
-        rgn = random.RandomState(random_seed)
+        rng = random.RandomState(random_seed)
 
         def position_sampled(scenario_choice, sampled_scenarios):
             """
@@ -355,14 +284,14 @@ class RouteScenario(BasicScenario):
         for trigger in potential_scenarios_definitions.keys():
             possible_scenarios = potential_scenarios_definitions[trigger]
 
-            scenario_choice = random.choice(possible_scenarios)
+            scenario_choice = rng.choice(possible_scenarios)
             del possible_scenarios[possible_scenarios.index(scenario_choice)]
             # We keep sampling and testing if this position is present on any of the scenarios.
             while position_sampled(scenario_choice, sampled_scenarios):
                 if possible_scenarios is None or not possible_scenarios:
                     scenario_choice = None
                     break
-                scenario_choice = rgn.choice(possible_scenarios)
+                scenario_choice = rng.choice(possible_scenarios)
                 del possible_scenarios[possible_scenarios.index(scenario_choice)]
 
             if scenario_choice is not None:
@@ -370,74 +299,8 @@ class RouteScenario(BasicScenario):
 
         return sampled_scenarios
 
-    def _build_master_scenario(self, world, ego_vehicle, route, town_name, timeout=300, debug_mode=False):
-        """
-        Create the MasterScenario
-        """
-        # We have to find the target.
-        # we also have to convert the route to the expected format
-        master_scenario_configuration = ScenarioConfiguration()
-        master_scenario_configuration.target = route[-1][0]  # Take the last point and add as target.
-        master_scenario_configuration.route = convert_transform_to_location(route)
-        master_scenario_configuration.town = town_name
-        # TODO THIS NAME IS BIT WEIRD SINCE THE EGO VEHICLE  IS ALREADY THERE, IT IS MORE ABOUT THE TRANSFORM
-        master_scenario_configuration.ego_vehicle = ActorConfigurationData('vehicle.lincoln.mkz2017',
-                                                                           ego_vehicle.get_transform(),
-                                                                           'hero')
-        master_scenario_configuration.trigger_points = [ego_vehicle.get_transform()]
-
-        # Provide an initial blackboard entry to ensure all scenarios are running correctly
-        blackboard = py_trees.blackboard.Blackboard()
-        blackboard.set('master_scenario_command', 'scenarios_running')
-
-        return MasterScenario(world, [ego_vehicle], master_scenario_configuration,
-                              timeout=timeout, debug_mode=debug_mode)
-
-    def _build_background_scenario(self, world, ego_vehicle, town_name, timeout=300, debug_mode=False):
-        """
-        Create the BackgroundActivity scenario
-        """
-        scenario_configuration = ScenarioConfiguration()
-        scenario_configuration.route = None
-        scenario_configuration.town = town_name
-
-        model = 'vehicle.*'
-        transform = carla.Transform()
-
-        if town_name == 'Town01' or town_name == 'Town02':
-            amount = 120
-        elif town_name == 'Town03' or town_name == 'Town05':
-            amount = 120
-        elif town_name == 'Town04':
-            amount = 200
-        elif town_name == 'Town06' or town_name == 'Town07':
-            amount = 150
-        elif town_name == 'Town08':
-            amount = 180
-        elif town_name == 'Town09':
-            amount = 350
-        else:
-            amount = 1
-
-        actor_configuration_instance = ActorConfigurationData(
-            model, transform, rolename='background', autopilot=True, random=True, amount=amount)
-        scenario_configuration.other_actors = [actor_configuration_instance]
-
-        return BackgroundActivity(world, [ego_vehicle], scenario_configuration,
-                                  timeout=timeout, debug_mode=debug_mode)
-
-    def _build_trafficlight_scenario(self, world, ego_vehicle, town_name, timeout=300, debug_mode=False):
-        """
-        Create scenario for traffic light manipulation
-        """
-        scenario_configuration = ScenarioConfiguration()
-        scenario_configuration.route = None
-        scenario_configuration.town = town_name
-
-        return TrafficLightScenario(world, [ego_vehicle], scenario_configuration,
-                                    timeout=timeout, debug_mode=debug_mode)
-
-    def _build_scenario_instances(self, world, ego_vehicle, scenario_definitions, town, timeout=300, debug_mode=False):
+    def _build_scenario_instances(self, world, ego_vehicle, scenario_definitions,
+                                  scenarios_per_tick=5, timeout=300, debug_mode=False):
         """
         Based on the parsed route and possible scenarios, build all the scenario classes.
         """
@@ -448,15 +311,13 @@ class RouteScenario(BasicScenario):
                 loc = carla.Location(scenario['trigger_position']['x'],
                                      scenario['trigger_position']['y'],
                                      scenario['trigger_position']['z']) + carla.Location(z=2.0)
-                world.debug.draw_point(loc, size=1.0, color=carla.Color(255, 0, 0), life_time=100000)
+                world.debug.draw_point(loc, size=0.3, color=carla.Color(255, 0, 0), life_time=100000)
                 world.debug.draw_string(loc, str(scenario['name']), draw_shadow=False,
                                         color=carla.Color(0, 0, 255), life_time=100000, persistent_lines=True)
 
-        for definition in scenario_definitions:
+        for scenario_number, definition in enumerate(scenario_definitions):
             # Get the class possibilities for this scenario number
-            possibility_vec = NUMBER_CLASS_TRANSLATION[definition['name']]
-
-            scenario_class = possibility_vec[definition['type']]
+            scenario_class = NUMBER_CLASS_TRANSLATION[definition['name']]
 
             # Create the other actors that are going to appear
             if definition['other_actors'] is not None:
@@ -468,15 +329,28 @@ class RouteScenario(BasicScenario):
             egoactor_trigger_position = convert_json_to_transform(definition['trigger_position'])
             scenario_configuration = ScenarioConfiguration()
             scenario_configuration.other_actors = list_of_actor_conf_instances
-            scenario_configuration.town = town
             scenario_configuration.trigger_points = [egoactor_trigger_position]
+            scenario_configuration.subtype = definition['scenario_type']
             scenario_configuration.ego_vehicles = [ActorConfigurationData('vehicle.lincoln.mkz2017',
                                                                           ego_vehicle.get_transform(),
                                                                           'hero')]
+            route_var_name = "ScenarioRouteNumber{}".format(scenario_number)
+            scenario_configuration.route_var_name = route_var_name
+
             try:
                 scenario_instance = scenario_class(world, [ego_vehicle], scenario_configuration,
                                                    criteria_enable=False, timeout=timeout)
-            except Exception as e:
+                # Do a tick every once in a while to avoid spawning everything at the same time
+                if scenario_number % scenarios_per_tick == 0:
+                    if CarlaDataProvider.is_sync_mode():
+                        world.tick()
+                    else:
+                        world.wait_for_tick()
+
+                scenario_number += 1
+            except Exception as e:      # pylint: disable=broad-except
+                if debug_mode:
+                    traceback.print_exc()
                 print("Skipping scenario '{}' due to setup error: {}".format(definition['name'], e))
                 continue
 
@@ -518,6 +392,37 @@ class RouteScenario(BasicScenario):
         """
         Set other_actors to the superset of all scenario actors
         """
+
+        # Create the background activity of the route
+        town_amount = {
+            'Town01': 120,
+            'Town02': 100,
+            'Town03': 120,
+            'Town04': 200,
+            'Town05': 120,
+            'Town06': 150,
+            'Town07': 110,
+            'Town08': 180,
+            'Town09': 300,
+            'Town10': 120,
+        }
+
+        amount = town_amount[config.town] if config.town in town_amount else 0
+
+        new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
+                                                                amount,
+                                                                carla.Transform(),
+                                                                autopilot=True,
+                                                                random_location=True,
+                                                                rolename='background')
+
+        if new_actors is None:
+            raise Exception("Error: Unable to add the background activity, all spawn points were occupied")
+
+        for _actor in new_actors:
+            self.other_actors.append(_actor)
+
+        # Add all the actors of the specific scenarios to self.other_actors
         for scenario in self.list_scenarios:
             self.other_actors.extend(scenario.other_actors)
 
@@ -525,23 +430,42 @@ class RouteScenario(BasicScenario):
         """
         Basic behavior do nothing, i.e. Idle
         """
+        scenario_trigger_distance = 1.5  # Max trigger distance between route and scenario
 
         behavior = py_trees.composites.Parallel(policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
-
-        behavior.add_child(self.master_scenario.scenario.behavior)
 
         subbehavior = py_trees.composites.Parallel(name="Behavior",
                                                    policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL)
 
-        for scenario in self.list_scenarios:
-            if scenario.scenario.behavior is not None and scenario.scenario.behavior.name != "MasterScenario":
-                oneshot_idiom = oneshot_behavior(
-                    name=scenario.scenario.behavior.name,
-                    variable_name=scenario.scenario.behavior.name,
-                    behaviour=scenario.scenario.behavior)
+        scenario_behaviors = []
+        blackboard_list = []
 
-                subbehavior.add_child(oneshot_idiom)
+        for i, scenario in enumerate(self.list_scenarios):
+            if scenario.scenario.behavior is not None:
+                route_var_name = scenario.config.route_var_name
+                if route_var_name is not None:
+                    scenario_behaviors.append(scenario.scenario.behavior)
+                    blackboard_list.append([scenario.config.route_var_name,
+                                            scenario.config.trigger_points[0].location])
+                else:
+                    name = "{} - {}".format(i, scenario.scenario.behavior.name)
+                    oneshot_idiom = oneshot_behavior(name,
+                                                     behaviour=scenario.scenario.behavior,
+                                                     name=name)
+                    scenario_behaviors.append(oneshot_idiom)
 
+        # Add behavior that manages the scenarios trigger conditions
+        scenario_triggerer = ScenarioTriggerer(
+            self.ego_vehicles[0],
+            self.route,
+            blackboard_list,
+            scenario_trigger_distance,
+            repeat_scenarios=False
+        )
+
+        subbehavior.add_child(scenario_triggerer)  # make ScenarioTriggerer the first thing to be checked
+        subbehavior.add_children(scenario_behaviors)
+        subbehavior.add_child(Idle())  # The behaviours cannot make the route scenario stop
         behavior.add_child(subbehavior)
 
         return behavior
@@ -550,14 +474,39 @@ class RouteScenario(BasicScenario):
         """
         """
 
-        test_criteria = py_trees.composites.Parallel(
-            name="Test Criteria", policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        criteria = []
 
-        for scenario in self.list_scenarios:
-            if scenario.scenario.test_criteria is not None:
-                test_criteria.add_child(scenario.scenario.test_criteria)
+        route = convert_transform_to_location(self.route)
 
-        return test_criteria
+        collision_criterion = CollisionTest(self.ego_vehicles[0], terminate_on_failure=False)
+
+        route_criterion = InRouteTest(self.ego_vehicles[0],
+                                      route=route,
+                                      offroad_max=30,
+                                      terminate_on_failure=True)
+
+        completion_criterion = RouteCompletionTest(self.ego_vehicles[0], route=route)
+
+        outsidelane_criterion = OutsideRouteLanesTest(self.ego_vehicles[0], route=route)
+
+        red_light_criterion = RunningRedLightTest(self.ego_vehicles[0])
+
+        stop_criterion = RunningStopTest(self.ego_vehicles[0])
+
+        blocked_criterion = ActorSpeedAboveThresholdTest(self.ego_vehicles[0],
+                                                         speed_threshold=0.1,
+                                                         below_threshold_max_time=90.0,
+                                                         terminate_on_failure=True)
+
+        criteria.append(completion_criterion)
+        criteria.append(collision_criterion)
+        criteria.append(route_criterion)
+        criteria.append(outsidelane_criterion)
+        criteria.append(red_light_criterion)
+        criteria.append(stop_criterion)
+        criteria.append(blocked_criterion)
+
+        return criteria
 
     def __del__(self):
         """

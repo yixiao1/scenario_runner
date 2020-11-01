@@ -12,11 +12,14 @@ import py_trees
 
 from srunner.scenarioconfigs.route_scenario_configuration import RouteConfiguration
 from srunner.scenariomanager.scenarioatomics.atomic_behaviors import Idle
-from srunner.scenariomanager.scenarioatomics.atomic_criteria import *
+from srunner.scenariomanager.scenarioatomics.atomic_criteria import (CollisionTest,
+                                                                     InRouteTest,
+                                                                     RouteCompletionTest,
+                                                                     OutsideRouteLanesTest,
+                                                                     RunningRedLightTest,
+                                                                     RunningStopTest,
+                                                                     ActorSpeedAboveThresholdTest)
 from srunner.scenarios.basic_scenario import BasicScenario
-
-
-MASTER_SCENARIO = ["MasterScenario"]
 
 
 class MasterScenario(BasicScenario):
@@ -27,28 +30,18 @@ class MasterScenario(BasicScenario):
     This is a single ego vehicle scenario
     """
 
-    category = "Master"
     radius = 10.0           # meters
 
-    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False,
-                 criteria_enable=True,
-                 timeout=300, terminate_on_collision=False):
+    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True,
+                 timeout=300):
         """
         Setup all relevant parameters and create scenario
         """
         self.config = config
-        self.target = None
         self.route = None
         # Timeout of scenario in seconds
         self.timeout = timeout
-        # The master scenario might terminate when there is any collision
-        self.terminate_on_collision = terminate_on_collision
 
-
-        if hasattr(self.config, 'target'):
-            self.target = self.config.target
-        else:
-            raise ValueError("Master scenario must have a target")
         if hasattr(self.config, 'route'):
             self.route = self.config.route
         else:
@@ -81,24 +74,25 @@ class MasterScenario(BasicScenario):
         else:
             route = self.route
 
-        collision_criterion = CollisionTest(self.ego_vehicles[0],
-                                            terminate_on_failure=self.terminate_on_collision)
+        collision_criterion = CollisionTest(self.ego_vehicles[0], terminate_on_failure=False)
 
         route_criterion = InRouteTest(self.ego_vehicles[0],
-                                      radius=30.0,
                                       route=route,
-                                      offroad_max=20,
+                                      offroad_max=30,
                                       terminate_on_failure=True)
 
         completion_criterion = RouteCompletionTest(self.ego_vehicles[0], route=route)
 
-        wrong_way_criterion = WrongLaneTest(self.ego_vehicles[0])
-
-        onsidewalk_criterion = OnSidewalkTest(self.ego_vehicles[0])
+        outsidelane_criterion = OutsideRouteLanesTest(self.ego_vehicles[0], route=route)
 
         red_light_criterion = RunningRedLightTest(self.ego_vehicles[0])
 
         stop_criterion = RunningStopTest(self.ego_vehicles[0])
+
+        blocked_criterion = ActorSpeedAboveThresholdTest(self.ego_vehicles[0],
+                                                         speed_threshold=0.1,
+                                                         below_threshold_max_time=90.0,
+                                                         terminate_on_failure=True)
 
         parallel_criteria = py_trees.composites.Parallel("group_criteria",
                                                          policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
@@ -106,10 +100,10 @@ class MasterScenario(BasicScenario):
         parallel_criteria.add_child(completion_criterion)
         parallel_criteria.add_child(collision_criterion)
         parallel_criteria.add_child(route_criterion)
-        parallel_criteria.add_child(wrong_way_criterion)
-        parallel_criteria.add_child(onsidewalk_criterion)
+        parallel_criteria.add_child(outsidelane_criterion)
         parallel_criteria.add_child(red_light_criterion)
         parallel_criteria.add_child(stop_criterion)
+        parallel_criteria.add_child(blocked_criterion)
 
         return parallel_criteria
 

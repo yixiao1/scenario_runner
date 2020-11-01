@@ -8,14 +8,9 @@
 Scenario spawning elements to make the town dynamic and interesting
 """
 
-import py_trees
-
-from srunner.scenariomanager.scenarioatomics.atomic_behaviors import TrafficJamChecker
-from srunner.scenariomanager.carla_data_provider import CarlaActorPool
+import carla
+from srunner.scenariomanager.carla_data_provider import CarlaDataProvider
 from srunner.scenarios.basic_scenario import BasicScenario
-
-
-BACKGROUND_ACTIVITY_SCENARIOS = ["BackgroundActivity"]
 
 
 class BackgroundActivity(BasicScenario):
@@ -27,16 +22,25 @@ class BackgroundActivity(BasicScenario):
     This is a single ego vehicle scenario
     """
 
-    category = "BackgroundActivity"
+    town_amount = {
+        'Town01': 120,
+        'Town02': 100,
+        'Town03': 120,
+        'Town04': 200,
+        'Town05': 120,
+        'Town06': 150,
+        'Town07': 110,
+        'Town08': 180,
+        'Town09': 300,
+        'Town10': 120,
+    }
 
-    def __init__(self, world, ego_vehicles, config, randomize=False, cross_factor=0.01,
-                 debug_mode=False, timeout=35 * 60):
+    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, timeout=35 * 60):
         """
         Setup all relevant parameters and create scenario
         """
         self.config = config
         self.debug = debug_mode
-        self.cross_factor = cross_factor
 
         self.timeout = timeout  # Timeout of scenario in seconds
 
@@ -49,38 +53,31 @@ class BackgroundActivity(BasicScenario):
                                                  criteria_enable=True)
 
     def _initialize_actors(self, config):
-        """
-            This initialize actors for the background actitivy. The actors can be both \
-            walkers (pedestrians) or vehicles (cars, bicycles, trucks ...)
-            The pedestrian can have a cross factor, how often they cross the road.
-        """
 
-        for actor in config.other_actors:
-            new_actors = CarlaActorPool.request_new_batch_actors(actor.model,
-                                                                 actor.amount,
-                                                                 actor.transform,
-                                                                 hero=False,
-                                                                 autopilot=actor.autopilot,
-                                                                 random_location=actor.random_location,
-                                                                 cross_factor=self.cross_factor)
+        town_name = config.town
+        if town_name in self.town_amount:
+            amount = self.town_amount[town_name]
+        else:
+            amount = 0
 
-            if new_actors is None:
-                raise Exception("Error: Unable to add actor {} at {}".format(actor.model, actor.transform))
+        new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
+                                                                amount,
+                                                                carla.Transform(),
+                                                                autopilot=True,
+                                                                random_location=True,
+                                                                rolename='background')
 
-            for _actor in new_actors:
-                self.other_actors.append(_actor)
+        if new_actors is None:
+            raise Exception("Error: Unable to add the background activity, all spawn points were occupied")
+
+        for _actor in new_actors:
+            self.other_actors.append(_actor)
 
     def _create_behavior(self):
         """
         Basic behavior do nothing, i.e. Idle
         """
-
-        # Build behavior tree
-        sequence = py_trees.composites.Sequence("BackgroundActivity")
-        check_jam = TrafficJamChecker(debug=self.debug)
-        sequence.add_child(check_jam)
-
-        return sequence
+        pass
 
     def _create_test_criteria(self):
         """
