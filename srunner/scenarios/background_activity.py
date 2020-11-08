@@ -35,12 +35,14 @@ class BackgroundActivity(BasicScenario):
         'Town10': 120,
     }
 
-    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, timeout=35 * 60):
+    def __init__(self, world, ego_vehicles, config, cross_factor=0.01, criteria_enable=True,
+                 debug_mode=False, timeout=35 * 60):
         """
         Setup all relevant parameters and create scenario
         """
         self.config = config
         self.debug = debug_mode
+        self.cross_factor = cross_factor
 
         self.timeout = timeout  # Timeout of scenario in seconds
 
@@ -50,28 +52,29 @@ class BackgroundActivity(BasicScenario):
                                                  world,
                                                  debug_mode,
                                                  terminate_on_failure=True,
-                                                 criteria_enable=True)
+                                                 criteria_enable=criteria_enable)
 
     def _initialize_actors(self, config):
 
-        town_name = config.town
-        if town_name in self.town_amount:
-            amount = self.town_amount[town_name]
-        else:
-            amount = 0
+        #town_name = config.town
+        #if town_name in self.town_amount:
+        #    amount = self.town_amount[town_name]
+        #else:
+        #    amount = 0
 
-        new_actors = CarlaDataProvider.request_new_batch_actors('vehicle.*',
-                                                                amount,
-                                                                carla.Transform(),
-                                                                autopilot=True,
-                                                                random_location=True,
-                                                                rolename='background')
+        for actor in config.other_actors:
+            new_actors = CarlaDataProvider.request_new_batch_actors(actor.model,
+                                                                 actor.amount,
+                                                                 actor.transform,
+                                                                 autopilot=actor.autopilot,
+                                                                 random_location=actor.random_location,
+                                                                 cross_factor=self.cross_factor)
 
-        if new_actors is None:
-            raise Exception("Error: Unable to add the background activity, all spawn points were occupied")
+            if new_actors is None:
+                raise Exception("Error: Unable to add the background activity, all spawn points were occupied")
 
-        for _actor in new_actors:
-            self.other_actors.append(_actor)
+            for _actor in new_actors:
+                self.other_actors.append(_actor)
 
     def _create_behavior(self):
         """

@@ -19,7 +19,7 @@ class ActorConfigurationData(object):
     """
 
     def __init__(self, model, transform, rolename='other', speed=0, autopilot=False,
-                 random=False, color=None, category="car", args=None):
+                 random=False, amount=1, color=None, category="car", args=None):
         self.model = model
         self.rolename = rolename
         self.transform = transform
@@ -28,6 +28,7 @@ class ActorConfigurationData(object):
         self.random_location = random
         self.color = color
         self.category = category
+        self.amount = amount
         self.args = args
 
     @staticmethod
@@ -59,7 +60,9 @@ class ActorConfigurationData(object):
 
         color = node.attrib.get('color', None)
 
-        return ActorConfigurationData(model, transform, rolename, speed, autopilot, random_location, color)
+        amount=node.attrib.get('amount', 1)
+
+        return ActorConfigurationData(model, transform, rolename, speed, autopilot, random_location, amount, color)
 
 
 class ScenarioConfiguration(object):

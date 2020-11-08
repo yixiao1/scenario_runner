@@ -32,16 +32,24 @@ class MasterScenario(BasicScenario):
 
     radius = 10.0           # meters
 
-    def __init__(self, world, ego_vehicles, config, randomize=False, debug_mode=False, criteria_enable=True,
-                 timeout=300):
+    def __init__(self, world, ego_vehicles, config, debug_mode=False, criteria_enable=True,
+                 timeout=300, terminate_on_collision=True):
         """
         Setup all relevant parameters and create scenario
         """
         self.config = config
+        self.target = None
         self.route = None
         # Timeout of scenario in seconds
         self.timeout = timeout
+        # The master scenario might terminate when there is any collision
+        self.terminate_on_collision = terminate_on_collision
 
+
+        if hasattr(self.config, 'target'):
+            self.target = self.config.target
+        else:
+            raise ValueError("Master scenario must have a target")
         if hasattr(self.config, 'route'):
             self.route = self.config.route
         else:
@@ -74,11 +82,12 @@ class MasterScenario(BasicScenario):
         else:
             route = self.route
 
-        collision_criterion = CollisionTest(self.ego_vehicles[0], terminate_on_failure=False)
+        collision_criterion = CollisionTest(self.ego_vehicles[0],
+                                            terminate_on_failure=self.terminate_on_collision)
 
         route_criterion = InRouteTest(self.ego_vehicles[0],
                                       route=route,
-                                      offroad_max=30,
+                                      offroad_max=20,
                                       terminate_on_failure=True)
 
         completion_criterion = RouteCompletionTest(self.ego_vehicles[0], route=route)

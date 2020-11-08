@@ -506,7 +506,7 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         return actors
 
     @staticmethod
-    def request_new_actor(model, spawn_point, rolename='scenario', autopilot=False,
+    def request_new_actor(model, spawn_point, rolename='hero', autopilot=False,
                           random_location=False, color=None, actor_category="car"):
         """
         This method tries to create a new actor, returning it if successful (None otherwise).
@@ -619,8 +619,8 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
         return actors
 
     @staticmethod
-    def request_new_batch_actors(model, amount, spawn_points, autopilot=False,
-                                 random_location=False, rolename='scenario'):
+    def request_new_batch_actors_original(model, amount, spawn_points, autopilot=False,
+                                 random_location=False, rolename='scenario', cross_factor=0.01):
         """
         Simplified version of "request_new_actors". This method also create several actors in batch.
 
@@ -645,7 +645,7 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
 
             if random_location:
                 if CarlaDataProvider._spawn_index >= len(CarlaDataProvider._spawn_points):
-                    print("No more spawn points to use. Spawned {} actors out of {}".format(i + 1, amount))
+                    print("No more spawn points to use. Spawned {} actors out of {}".format(i + 1, len(CarlaDataProvider._spawn_points)))
                     break
                 else:
                     spawn_point = CarlaDataProvider._spawn_points[CarlaDataProvider._spawn_index]
@@ -673,6 +673,154 @@ class CarlaDataProvider(object):  # pylint: disable=too-many-public-methods
             CarlaDataProvider._carla_actor_pool[actor.id] = actor
             CarlaDataProvider.register_actor(actor)
         return actors
+
+    @staticmethod
+    def request_new_batch_actors(model, amount, spawn_points, autopilot=False,
+                                     random_location=False, rolename='scenario', cross_factor=0.01):
+        """
+        Simplified version of "request_new_actors". This method also create several actors in batch.
+
+        Instead of needing a list of ActorConfigurationData, an "amount" parameter is used.
+        This makes actor spawning easier but reduces the amount of configurability.
+
+        Some parameters are the same for all actors (rolename, autopilot and random location)
+        while others are randomized (color)
+        """
+
+        SpawnActor = carla.command.SpawnActor  # pylint: disable=invalid-name
+        SetAutopilot = carla.command.SetAutopilot  # pylint: disable=invalid-name
+        FutureActor = carla.command.FutureActor  # pylint: disable=invalid-name
+
+        blueprint_library = CarlaDataProvider._world.get_blueprint_library()
+
+        batch = []
+        walker_speed = []
+        # Get vehicle by model
+        blueprint = random.choice(blueprint_library.filter(model))
+        for _ in range(amount):
+            # is it a pedestrian? -> make it mortal
+            if blueprint.has_attribute('is_invincible'):
+                blueprint.set_attribute('is_invincible', 'false')
+
+            if 'walker' in model:
+                blueprint.set_attribute('role_name', 'walker')
+            elif autopilot:
+                blueprint.set_attribute('role_name', 'autopilot')
+            else:
+                blueprint.set_attribute('role_name', rolename)
+
+            if random_location:
+                if 'walker' in model:
+                    spawn_point = carla.Transform()
+                    spawn_point.location = CarlaDataProvider._world.get_random_location_from_navigation()
+                    spawn_point.location.z = spawn_point.location.z + 1.0
+                    if spawn_point.location is None:
+                        print("Wrong location")
+                elif CarlaDataProvider._spawn_index >= len(CarlaDataProvider._spawn_points):
+                    print("No more spawn points to use. Spawned {} actors out of {}".format(i + 1, len(CarlaDataProvider._spawn_points)))
+                    break
+                else:
+                    spawn_point = CarlaDataProvider._spawn_points[CarlaDataProvider._spawn_index]
+                    CarlaDataProvider._spawn_index += 1
+            else:
+                try:
+                    spawn_point = spawn_points[_]
+                except IndexError:
+                    print("The amount of spawn points is lower than the amount of vehicles spawned")
+                    break
+            if spawn_point:
+                if 'walker' in model:  # If the model is a walker we try to directly set the autopilot to it.
+                    walker_bp = random.choice(blueprint_library.filter('walker.pedestrian*'))
+                    if walker_bp.has_attribute('is_invincible'):
+                        walker_bp.set_attribute('is_invincible', 'false')
+
+                    walker_bp.set_attribute('role_name', 'walker')
+
+                    if walker_bp.has_attribute('speed'):
+                        if (random.random() > 0.1):
+                            walker_speed.append(
+                                walker_bp.get_attribute('speed').recommended_values[1])
+                        else:
+                            # running
+                            walker_speed.append(
+                                walker_bp.get_attribute('speed').recommended_values[2])
+                    else:
+                        print("Walker has no speed")
+
+                    walker_shape = SpawnActor(walker_bp, spawn_point)
+                    batch.append(walker_shape)
+
+                else:
+                    batch.append(SpawnActor(blueprint, spawn_point).then(SetAutopilot(FutureActor,autopilot)))
+
+
+        sync_mode = CarlaDataProvider.is_sync_mode()
+
+        if CarlaDataProvider._client and batch is not None:
+            responses = CarlaDataProvider._client.apply_batch_sync(batch, sync_mode)
+
+            # wait for the actors to be spawned properly before we do anything
+            if sync_mode:
+                CarlaDataProvider._world.tick()
+            else:
+                CarlaDataProvider._world.wait_for_tick()
+
+            actors = []
+            actor_ids = []
+            controllers_ids = []
+            controllers = []
+            if responses:
+                for response in responses:
+                    if not response.error:
+                        if 'walker' in CarlaDataProvider._world.get_actor(response.actor_id).type_id:
+                            walker_controller_bp = blueprint_library.find('controller.ai.walker')
+                            walker_control = SpawnActor(walker_controller_bp, carla.Transform(),
+                                                        response.actor_id)
+                            controllers.append(walker_control)
+                        # Regardless of being a walker or a vehicle we add to the list
+                        actor_ids.append(response.actor_id)
+                    else:
+                        print("Response", response.error)
+
+            # Second spawn for the controllers
+            if CarlaDataProvider._client:
+                results_controler = CarlaDataProvider._client.apply_batch_sync(controllers)
+
+            # Get the spawned controllers iD.
+            for i in range(len(results_controler)):
+                controllers_ids.append(results_controler[i].actor_id)
+
+            carla_actors = CarlaDataProvider._world.get_actors(actor_ids)
+            for actor in carla_actors:
+                actors.append(actor)
+
+            walkers_present = CarlaDataProvider._world.get_actors(controllers_ids)
+
+            # This function set how often pedestrians cross
+            CarlaDataProvider._world.set_pedestrians_cross_factor(cross_factor)
+
+            for i in range(0, len(walkers_present)):
+                # start walker
+                walkers_present[i].start()
+                # set walk to random point
+                location_to_go = CarlaDataProvider._world.get_random_location_from_navigation()
+                walkers_present[i].go_to_location(location_to_go)
+                # random max speed
+                walkers_present[i].set_max_speed(1 + random.random())  # max speed between 1 and 2 (default is 1.4 m/s)
+
+        else:
+            actors = None
+
+        if actors is None:
+            return None
+
+        for actor in actors:
+            if actor is None:
+                continue
+            CarlaDataProvider._carla_actor_pool[actor.id] = actor
+            CarlaDataProvider.register_actor(actor)
+        return actors
+
 
     @staticmethod
     def get_actors():
